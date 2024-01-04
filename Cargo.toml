@@ -1,0 +1,29 @@
+[package]
+name = "s3-fast-list"
+version = "1.0.0"
+edition = "2021"
+authors = ["daiyy <dyiyang@amazon.com>"]
+rust-version = "1.75"
+description = "concurrently list Amazon S3 bucket"
+license-file = "LICENSE"
+
+[dependencies]
+log = "0.4.20"
+env_logger = "0.10.1"
+clap = { version = "4.4.11", features = ["derive"] }
+tokio = { version = "1", features = ["full"] }
+aws-config = { version = "1.1.1", features = ["behavior-version-latest"] }
+aws-sdk-s3 = "1.11.0"
+hyper_0_14 = { package = "hyper", version = "0.14.28",features = ["client", "tcp", "http1", "http2"] }
+hyper-rustls = "0.24.2"
+aws-smithy-runtime = { version = "1.1.1", features = ["client", "connector-hyper-0-14-x"] }
+aws-smithy-runtime-api = "1.1.1"
+aws-smithy-async = "1.1.1"
+arrow = "49.0.0"
+arrow-array = "49.0.0"
+arrow-schema = "49.0.0"
+parquet = { version = "49.0.0", features = ["async"] }
+futures = "0.3.30"
+ctrlc = "3.4.2"
+chrono = "0.4.31"
+hex = "0.4.3"
