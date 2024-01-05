@@ -131,7 +131,8 @@ A bucket with 100 million objects used as benchmark baseline
 | 100 | 2024-01-01T09:47:50Z | 2024-01-01T09:49:32Z | 102 |
 | 1000 | 2024-01-01T10:17:59Z | 2024-01-01T10:18:31Z | 32 |
 
-All tests running on a m6i.8xlarge Amazon EC2 instance
+- All tests running on a m6i.8xlarge Amazon EC2 instance
+- Duration stands for overall list time only, metadata export time is not included.
 
 ## Blogs
 
@@ -139,7 +140,7 @@ All tests running on a m6i.8xlarge Amazon EC2 instance
 
 ## Roadmap
 - [ ] Provide tools to generate ks hints
-- [ ] Generate ks hints directly from Amazon S3 Inventory
+- [ ] Generate ks hints from Amazon S3 Inventory
 - [ ] Add support for directory buckets (Amazon S3 Express One Zone)
 
 ## Security
