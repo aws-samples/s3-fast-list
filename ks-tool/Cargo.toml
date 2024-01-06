@@ -1,0 +1,15 @@
+[package]
+name = "ks-tool"
+version = "1.0.0"
+edition = "2021"
+authors = ["daiyy <dyiyang@amazon.com>"]
+rust-version = "1.75"
+license-file = "LICENSE"
+
+[dependencies]
+clap = { version = "4.4.11", features = ["derive"] }
+tokio = { version = "1", features = ["full"] }
+ctrlc = "3.4.2"
+serde = { version = "1.0.194", features = ["serde_derive"] }
+csv = "1.3.0"
+indicatif = "0.17.7"
