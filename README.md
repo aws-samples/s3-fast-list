@@ -103,7 +103,7 @@ The following shows example contents of a ks file:
 "North America/USA/Washington/Seattle","65"
 ```
 
-### Prepare your ks hint
+### Prepare your ks hints
 
 Based on exported prefix distribution ks file, you could split your prefix into segments for parallel list.
 
@@ -119,6 +119,11 @@ Above ks hints will split all prefix into 3 segments:
 3. [`North America/USA/Washington/Seattle` to `""` VERY LAST]
 
 Since the nature of ["List results are always returned in UTF-8 binary order"](https://docs.aws.amazon.com/AmazonS3/latest/userguide/ListingKeysUsingAPIs.html), ALL objects will be covered during concurrent listing.
+
+Use [ks-tool](ks-tool) to split your ks to target count of prefix segments
+```
+ks-tool split -k {region}_{bucket}_{datetime}.ks -c {num of splits} -o {region}_{bucket}_ks_hints.input
+```
 
 ## Performance test
 
@@ -139,7 +144,7 @@ A bucket with 100 million objects used as benchmark baseline
 * [五行俱下 – 如何在短时间里遍历 Amazon S3 亿级对象桶（原理篇）](https://aws.amazon.com/cn/blogs/china/how-to-traverse-amazon-s3-billion-object-buckets-in-a-short-time-principle/)
 
 ## Roadmap
-- [ ] Provide tools to generate ks hints
+- [ ] ~~Provide tools to generate ks hints~~
 - [ ] Generate ks hints from Amazon S3 Inventory
 - [ ] Add support for directory buckets (Amazon S3 Express One Zone)
 
