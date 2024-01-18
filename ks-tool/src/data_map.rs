@@ -4,7 +4,9 @@ use tokio::io::AsyncWriteExt;
 use indicatif::{ProgressBar, style::ProgressStyle};
 
 pub(crate) struct PrefixMap {
+    // map for (prefix, objects count under it)
     inner: HashMap<String, usize>,
+    // tracking count for total objects
     count: usize,
 }
 
@@ -16,11 +18,15 @@ impl PrefixMap {
         }
     }
 
-    pub fn get_count(&self) -> usize {
+    pub fn get_prefix_count(&self) -> usize {
+        self.inner.len()
+    }
+
+    pub fn get_object_count(&self) -> usize {
         self.count
     }
 
-    pub fn inc_count(&mut self) {
+    pub fn inc_object_count(&mut self) {
         self.count += 1;
     }
 
@@ -30,10 +36,11 @@ impl PrefixMap {
                         .map_or("/".to_string(), |(p, _)| p.to_string());
         if let Some(objects_count) = self.inner.get_mut(&prefix) {
             *objects_count += 1;
+            self.inc_object_count();
             return;
         }
         self.inner.insert(prefix, 1);
-        self.inc_count();
+        self.inc_object_count();
     }
 
     pub async fn dump_ks(&self, filename: &str, with_bar: bool) -> tokio::io::Result<(usize, usize)> {
@@ -47,7 +54,7 @@ impl PrefixMap {
         let mut btree = std::collections::BTreeMap::<&str, usize>::new();
 
         let bar = if with_bar {
-            let bar = ProgressBar::new(self.inner.len() as u64);
+            let bar = ProgressBar::new(self.get_prefix_count() as u64);
             bar.enable_steady_tick(Duration::from_millis(200));
             bar.set_style(
                 ProgressStyle::with_template("[{elapsed_precise}] {bar:40.cyan/blue} {percent}% {msg}")
@@ -71,7 +78,7 @@ impl PrefixMap {
         }
 
         let bar = if with_bar {
-            let bar = ProgressBar::new(self.inner.len() as u64);
+            let bar = ProgressBar::new(self.get_prefix_count() as u64);
             bar.enable_steady_tick(Duration::from_millis(200));
             bar.set_style(
                 ProgressStyle::with_template("[{elapsed_precise}] {bar:40.cyan/blue} {percent}% {msg}")
@@ -98,6 +105,7 @@ impl PrefixMap {
         if let Some(ref b) = bar {
             b.finish_with_message("Exporting prefix map ... Done");
         }
-        Ok((self.get_count(), object_count))
+        assert!(object_count == self.get_object_count());
+        Ok((self.get_prefix_count(), object_count))
     }
 }
