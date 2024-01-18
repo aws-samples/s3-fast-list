@@ -150,8 +150,9 @@ A bucket with 100 million objects used as benchmark baseline
 
 ## Roadmap
 - [ ] ~~Provide tools to generate ks hints~~
-- [ ] Generate ks hints from Amazon S3 Inventory
+- [ ] ~~Generate ks hints from Amazon S3 Inventory~~
 - [ ] Add support for directory buckets (Amazon S3 Express One Zone)
+- [ ] Rule based metadata comparasion for diff mode
 
 ## Security
 
