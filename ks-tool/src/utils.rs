@@ -121,13 +121,6 @@ pub(crate) async fn handle_ks_input(input: &str, splits: usize, output: &str) ->
     Ok(())
 }
 
-pub(crate) async fn handle_inventory_input(input: &str, count: usize, output: &str) -> Result<(), tokio::io::Error> {
-    let _ = input;
-    let _ = count;
-    let _ = output;
-    Ok(())
-}
-
 // download all inventory to build prefix map and dump to ks
 async fn build_and_dump_prefix_map(client: S3Client,
         dest_bucket: &str,
