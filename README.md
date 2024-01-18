@@ -103,6 +103,11 @@ The following shows example contents of a ks file:
 "North America/USA/Washington/Seattle","65"
 ```
 
+There are 2 ways currently to generate ks file:
+
+1. Every time your execute `s3-fast-list list | diff`, ks file will be dump by default in the name of `{region}_{bucket}_{datetime}.ks`.
+2. With `ks-tool inventory -r {region} -m {s3_inventory_manifest.json} -c {concurrency}`, you can generated ks file from you S3 inventory report in CVS format.
+
 ### Prepare your ks hints
 
 Based on exported prefix distribution ks file, you could split your prefix into segments for parallel list.
