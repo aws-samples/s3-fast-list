@@ -147,6 +147,7 @@ A bucket with 100 million objects used as benchmark baseline
 ## Blogs
 
 * [五行俱下 – 如何在短时间里遍历 Amazon S3 亿级对象桶（原理篇）](https://aws.amazon.com/cn/blogs/china/how-to-traverse-amazon-s3-billion-object-buckets-in-a-short-time-principle/)
+* [一骑绝尘 – 如何在短时间里遍历 Amazon S3 亿级对象桶（工具篇）](https://aws.amazon.com/cn/blogs/china/how-to-traverse-amazon-s3-billion-object-buckets-in-a-short-time-tools/)
 
 ## Roadmap
 - [ ] ~~Provide tools to generate ks hints~~
