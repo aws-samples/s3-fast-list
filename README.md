@@ -31,6 +31,7 @@ Options:
   -t, --threads <THREADS>          worker threads for runtime [default: 10]
   -c, --concurrency <CONCURRENCY>  max concurrency tasks for list operation [default: 100]
   -k, --ks-file <KS_FILE>          input key space hints file [default: {region}_{bucket}_ks_hints.input]
+  -f, --filter <FILTER>            object filter expresion
   -l, --log                        log to file [default: fastlist_{datetime}.log]
   -h, --help                       Print help
   -V, --version                    Print version
@@ -65,6 +66,34 @@ To fast list a single bucket and export all retrieved object metadata to output 
 s3-fast-list diff - bi-dir fast list and diff results
 ```
 To fast list a pair of buckets in parallel, compare object metadata of same object key based on "Size" and "Etag", export all retrieved object metadata with difference flag.
+
+### Filter
+
+For some reasons, when you want to apply some conditions to filter out objects found by it's metadata properties, you can apply a filter.
+
+#### Filter syntax
+Filter is a string of expression of condition.
+
+Allowed variable: `SOURCE` and `TARGET` (`TARGET` only for diff mode).
+
+Allowed property: `size` and `last_modified` in integer.
+
+Examples:
+```
+# for list mode
+# object size great than 1000 bytes and it's last modified time great equal to January 1, 2024 00:00:00 UTC
+list --filter "SOURCE.size > 1000 && SOURCE.last_modified >= 1704038400"
+
+# for diff mode
+# object size from SOURCE bucket great than 1000 bytes and it's last modified time great equals to January 1, 2024 00:00:00 UTC
+# or object size from TARGET bucket equals to 100000 bytes.
+diff --filter "(SOURCE.size > 1000 && SOURCE.last_modified >= 1704038400) || TARGET.size == 100000"
+```
+
+#### Differences between modes
+in `list` mode, filter apples to all objects.
+
+in `diff` mode, filter apples for objects seen on both `SOURCE` and `TARGET` side (`DiffFlag` in `3`).
 
 ### Output
 #### Object metadata (parquet file)
@@ -153,7 +182,7 @@ A bucket with 100 million objects used as benchmark baseline
 - [ ] ~~Provide tools to generate ks hints~~
 - [ ] ~~Generate ks hints from Amazon S3 Inventory~~
 - [ ] Add support for directory buckets (Amazon S3 Express One Zone)
-- [ ] Rule based metadata comparasion for diff mode
+- [ ] ~~Rule based metadata comparasion for diff mode~~
 
 ## Security
 
