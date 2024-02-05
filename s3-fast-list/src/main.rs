@@ -12,6 +12,7 @@ use clap::{Parser, Subcommand};
 use chrono::{Local, SecondsFormat};
 use log::info;
 use core::MB;
+use core::RunMode;
 
 #[derive(Parser)]
 #[command(author, version, about, long_about = None)]
@@ -35,6 +36,10 @@ struct Cli {
     /// input key space hints file [default: {region}_{bucket}_ks_hints.input]
     #[arg(short, long, global=true)]
     ks_file: Option<String>,
+
+    /// object filter expresion
+    #[arg(short, long, global=true)]
+    filter: Option<String>,
 
     /// log to file [default: fastlist_{datetime}.log]
     #[arg(short, long, global=true)]
@@ -75,12 +80,6 @@ enum Commands {
     },
 }
 
-#[derive(Debug, PartialEq)]
-enum RunMode {
-    List,
-    BiDir,
-}
-
 fn main() {
 
     let cli = Cli::parse();
@@ -92,6 +91,7 @@ fn main() {
     let opt_prefix = if cli.prefix == "/" { "".to_string() } else { cli.prefix };
     let opt_threads = cli.threads;
     let opt_concurrency = cli.concurrency;
+    let opt_filter = cli.filter;
 
     // baseline count for all main tasks
     // data map task and mon task
@@ -172,6 +172,9 @@ fn main() {
     info!("fast list tools v{} starting:", env!("CARGO_PKG_VERSION"));
     info!("  - mode {:?}, threads {}, concurrent tasks {}", opt_mode, opt_threads, opt_concurrency);
     info!("  - start prefix {}", opt_prefix);
+    if opt_filter.is_some() {
+        info!("  - filter \"{}\"", opt_filter.as_ref().unwrap());
+    }
     if ks_list_len == 0 {
         info!("  - NO ks hints found");
     } else {
@@ -198,8 +201,13 @@ fn main() {
 
         // init left task
         let prefix = opt_prefix.clone();
+        let dir = if opt_mode == RunMode::BiDir {
+            core::S3_TASK_CONTEXT_DIR_LEFT_DIFF_MODE
+        } else {
+            core::S3_TASK_CONTEXT_DIR_LEFT_LIST_MODE
+        };
         let task_ctx = core::S3TaskContext::new(opt_region, opt_bucket,
-            data_map_channel.clone(), core::S3_TASK_CONTEXT_DIR_LEFT, g_state.clone()
+            data_map_channel.clone(), dir, g_state.clone()
         );
         set.spawn_blocking(move || {
             tokio::runtime::Handle::current().block_on(async move {
@@ -211,7 +219,7 @@ fn main() {
         if opt_mode == RunMode::BiDir {
             let prefix = opt_prefix.clone();
             let task_ctx = core::S3TaskContext::new(opt_target_region.as_ref().unwrap(), opt_target_bucket.as_ref().unwrap(),
-                data_map_channel, core::S3_TASK_CONTEXT_DIR_RIGHT, g_state.clone()
+                data_map_channel, core::S3_TASK_CONTEXT_DIR_RIGHT_DIFF_MODE, g_state.clone()
             );
             let ks_hints = data_map::KeySpaceHints::new_from(&ks_list);
             set.spawn_blocking(move || {
@@ -222,7 +230,7 @@ fn main() {
         }
 
         // init data map task
-        let data_map_ctx = core::DataMapContext::new(data_map_channel_rx, g_state.clone());
+        let data_map_ctx = core::DataMapContext::new(data_map_channel_rx, g_state.clone(), opt_filter, opt_mode.clone());
         let filename_ks = format!("{}_{}_{}.ks", opt_region, opt_bucket, dt_str);
         let filename_output = if opt_mode == RunMode::List {
             format!("{}_{}_{}.parquet", opt_region, opt_bucket, dt_str)

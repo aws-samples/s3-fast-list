@@ -1,8 +1,13 @@
 use std::sync::Arc;
 use std::sync::atomic::{AtomicUsize, AtomicBool, Ordering};
+use std::sync::OnceLock;
 use std::collections::HashMap;
 use tokio::sync::Barrier;
 use tokio::sync::mpsc::{UnboundedSender, UnboundedReceiver};
+use rhai::{Engine, AST, Scope};
+use rhai::serde::to_dynamic;
+use serde::{Deserialize, Serialize};
+use log::{warn, error};
 use crate::stats::HttpStatusCodeTracker;
 
 #[allow(dead_code)]
@@ -18,6 +23,9 @@ pub(crate) const DEFAULT_S3_CLIENT_TIMEOUT: u64 = 5;
 
 pub(crate) const S3_TASK_CONTEXT_DIR_LEFT: u8 = OBJECT_PROPS_FLAG_DIR_LEFT;
 pub(crate) const S3_TASK_CONTEXT_DIR_RIGHT: u8 = OBJECT_PROPS_FLAG_DIR_RIGHT;
+pub(crate) const S3_TASK_CONTEXT_DIR_LEFT_LIST_MODE: u8 = OBJECT_PROPS_FLAG_DIR_LEFT;
+pub(crate) const S3_TASK_CONTEXT_DIR_LEFT_DIFF_MODE: u8 = OBJECT_PROPS_FLAG_DIR_LEFT | OBJECT_PROPS_FLAG_DIFF_MODE;
+pub(crate) const S3_TASK_CONTEXT_DIR_RIGHT_DIFF_MODE: u8 = OBJECT_PROPS_FLAG_DIR_RIGHT | OBJECT_PROPS_FLAG_DIFF_MODE;
 
 const S3_CLIENT_MAX_ATTEMPTS: u32 = 10;
 const S3_CLIENT_INITIAL_BACKOFF: u64 = 30;
@@ -29,12 +37,98 @@ const OBJECT_PROPS_FLAG_S3_DIR_BUCKET: u8 = 0b10;   // directory bucket
 const OBJECT_PROPS_FLAG_DIR_LEFT: u8 = 0b1000_0000;
 const OBJECT_PROPS_FLAG_DIR_RIGHT: u8 = 0b0100_0000;
 const OBJECT_PROPS_FLAG_DIR_BOTH: u8 = 0b1100_0000;
+const OBJECT_PROPS_FLAG_DIFF_MODE: u8 = 0b0010_0000;
 
 const OBJECT_PROPS_STATUS_OPEN: u8 = 0xFF;
 const OBJECT_PROPS_STATUS_MATCH: u8 = 0x0;
 const OBJECT_PROPS_STATUS_SIZE_NOT_MATCH: u8 = 1;
 const OBJECT_PROPS_STATUS_ETAG_NOT_AVAIL: u8 = 2;
 const OBJECT_PROPS_STATUS_ETAG_NOT_MATCH: u8 = 3;
+const OBJECT_PROPS_STATUS_FILTER_OUT: u8 = 4;
+
+const OBJECT_FILTER_ALLOWED_VARIABLE: [&str; 2] = ["SOURCE", "TARGET"];
+const OBJECT_FILTER_ALLOWED_PROPERTY: [&str; 2] = ["size", "last_modified"];
+pub(crate) static OBJECT_FILTER: OnceLock<ObjectFilter> = OnceLock::new();
+
+#[derive(Debug)]
+pub(crate) struct ObjectFilter {
+    engine: Engine,
+    ast: AST,
+}
+
+impl ObjectFilter {
+    // check any invalidation of input filter experssion
+    fn check_expr(&self, mode: RunMode) -> bool {
+
+        let mut check_failed = false;
+        /*
+         * since rhai only check object map existence when the expression is executed to specific condition,
+         * go through AST to check all variable's props to ensure only allowed object props is used.
+        */
+        self.ast.walk(&mut|nodes| {
+            let mut cont = true;
+            for node in nodes {
+                match node {
+                    rhai::ASTNode::Expr(expr) => {
+                        match expr {
+                            // Property(Box<((getter, hash), (setter, hash), prop)>, position)
+                            rhai::Expr::Property(props, _) => {
+                                let prop = props.2.as_str();
+                                if !OBJECT_FILTER_ALLOWED_PROPERTY.contains(&prop) {
+                                    error!("object property \"{prop}\" not allowed");
+                                    cont = false;
+                                    check_failed = true;
+                                }
+                            },
+                            rhai::Expr::Variable(names, _, _) => {
+                                let name = names.3.as_str();
+                                if !OBJECT_FILTER_ALLOWED_VARIABLE.contains(&name) {
+                                    error!("variable \"{name}\" not allowed");
+                                    cont = false;
+                                    check_failed = true;
+                                }
+                            },
+                            _ => {},
+                        }
+                    }
+                    _ => {},
+                }
+            }
+            cont
+        });
+
+        if check_failed {
+            return false;
+        }
+
+        // then we build fake ObjectProps to test AST to see
+        // any other invalidation exist in expression
+        let mut scope = Scope::new();
+        let source = to_dynamic(ObjectProps::default()).unwrap();
+        scope.push_constant_dynamic("SOURCE", source.into_read_only());
+
+        if mode == RunMode::BiDir {
+            let target = to_dynamic(ObjectProps::default()).unwrap();
+            scope.push_constant_dynamic("TARGET", target.into_read_only());
+        }
+
+        match self.engine.eval_ast_with_scope::<bool>(&mut scope, &self.ast) {
+            Ok(_) => {
+                return true;
+            },
+            Err(e) => {
+                error!("validation filter expression failed: {e:?}");
+                return false;
+            }
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub(crate) enum RunMode {
+    List,
+    BiDir,
+}
 
 #[repr(transparent)]
 #[derive(Debug)]
@@ -90,18 +184,24 @@ pub enum MatchResult {
     Minus = 2,
     Astrisk = 3,
     Dup = 4,
+    Ignore = 5,
 }
 
 #[repr(align(8))]
-#[derive(Debug, Clone)]
+#[derive(Default, Debug, Clone, Serialize, Deserialize)]
 pub struct ObjectProps {
+    #[serde(skip)]
     flags: u8,
+    #[serde(skip)]
     status: u8,
     #[allow(dead_code)]
+    #[serde(skip)]
     pad: u16,
+    #[serde(skip)]
     etag_parts: u32,
     last_modified: u64,
     size: u64,
+    #[serde(skip)]
     etag_md5: [u8; 16],
 }
 
@@ -109,6 +209,10 @@ impl ObjectProps {
 
     pub fn set_dir(&mut self, dir: u8) {
         self.flags |= dir;
+    }
+
+    pub fn is_diff_mode(&self) -> bool {
+        (self.flags & OBJECT_PROPS_FLAG_DIFF_MODE) == OBJECT_PROPS_FLAG_DIFF_MODE
     }
 
     #[allow(dead_code)]
@@ -162,6 +266,31 @@ impl ObjectProps {
     // used only in final dump stage
     pub fn final_status_check(&self) -> MatchResult {
 
+        // if we are in list mode and we have filter set, do apply here
+        if !self.is_diff_mode() {
+            if let Some(filter) = OBJECT_FILTER.get() {
+                let mut scope = Scope::new();
+                let source = to_dynamic(self).unwrap();
+                scope.push_constant_dynamic("SOURCE", source.into_read_only());
+                match filter.engine.eval_ast_with_scope(&mut scope, &filter.ast) {
+                    Ok(false) => {
+                        return MatchResult::Ignore;
+                    },
+                    Ok(true) => {
+                        // if filter condition matched, just continue
+                    },
+                    e @ _ => {
+                        // if apply filter error, just continue
+                        warn!("failed to apply filter for {self:?}, error: {e:?}");
+                    }
+                }
+            }
+        }
+
+        if self.status == OBJECT_PROPS_STATUS_FILTER_OUT {
+            return MatchResult::Ignore;
+        }
+
         if self.status == OBJECT_PROPS_STATUS_SIZE_NOT_MATCH ||
             self.status == OBJECT_PROPS_STATUS_ETAG_NOT_AVAIL ||
             self.status == OBJECT_PROPS_STATUS_ETAG_NOT_MATCH {
@@ -177,7 +306,7 @@ impl ObjectProps {
         if self.status == OBJECT_PROPS_STATUS_OPEN {
 
             // if status is in OPEN, only one side set the flag
-            assert!((self.flags & 0b11) != 0b11);
+            assert!((self.flags & OBJECT_PROPS_FLAG_DIR_BOTH) != OBJECT_PROPS_FLAG_DIR_BOTH);
 
             if self.is_left() {
                 return MatchResult::Plus;
@@ -206,7 +335,7 @@ impl ObjectProps {
          * obviously this is a duplicated props
          * just ignore this
          */
-        if self.flags == OBJECT_PROPS_FLAG_DIR_BOTH {
+        if (self.flags & OBJECT_PROPS_FLAG_DIR_BOTH) == OBJECT_PROPS_FLAG_DIR_BOTH {
             return MatchResult::Dup;
         }
 
@@ -223,10 +352,36 @@ impl ObjectProps {
                 (other, self)
             };
 
+        // apply filter if we have
+        if let Some(filter) = OBJECT_FILTER.get() {
+            // should be in diff mode
+            assert!(left.is_diff_mode() && right.is_diff_mode());
+            let mut scope = Scope::new();
+            let source = to_dynamic(left).unwrap();
+            let target = to_dynamic(right).unwrap();
+            scope.push_constant_dynamic("SOURCE", source.into_read_only());
+            scope.push_constant_dynamic("TARGET", target.into_read_only());
+            match filter.engine.eval_ast_with_scope(&mut scope, &filter.ast) {
+                Ok(false) => {
+                    *self = left.clone();
+                    self.flags |= OBJECT_PROPS_FLAG_DIR_BOTH;
+                    self.status = OBJECT_PROPS_STATUS_FILTER_OUT;
+                    return MatchResult::Ignore;
+                },
+                Ok(true) => {
+                    // if filter condition matched, just continue
+                },
+                e @ _ => {
+                    // if apply filter error, just continue
+                    warn!("failed to apply filter for {left:?} and {right:?}, error: {e:?}");
+                }
+            }
+        }
+
         // if size not match, override the entry with left's data
         if left.size != right.size {
             *self = left.clone();
-            self.flags = OBJECT_PROPS_FLAG_DIR_BOTH;
+            self.flags |= OBJECT_PROPS_FLAG_DIR_BOTH;
             self.status = OBJECT_PROPS_STATUS_SIZE_NOT_MATCH;
             return MatchResult::Astrisk;
         }
@@ -235,7 +390,7 @@ impl ObjectProps {
         // mark this *
         if left.is_etag_avail() || right.is_etag_avail() {
             *self = left.clone();
-            self.flags = OBJECT_PROPS_FLAG_DIR_BOTH;
+            self.flags |= OBJECT_PROPS_FLAG_DIR_BOTH;
             self.status = OBJECT_PROPS_STATUS_ETAG_NOT_AVAIL;
             return MatchResult::Astrisk;
         }
@@ -243,13 +398,13 @@ impl ObjectProps {
         // if we have md5 value on both side
         if left.etag() != right.etag() {
             *self = left.clone();
-            self.flags = OBJECT_PROPS_FLAG_DIR_BOTH;
+            self.flags |= OBJECT_PROPS_FLAG_DIR_BOTH;
             self.status = OBJECT_PROPS_STATUS_ETAG_NOT_MATCH;
             return MatchResult::Astrisk;
         }
 
         *self = left.clone();
-        self.flags = OBJECT_PROPS_FLAG_DIR_BOTH;
+        self.flags |= OBJECT_PROPS_FLAG_DIR_BOTH;
         self.status = OBJECT_PROPS_STATUS_MATCH;
         return MatchResult::Equal;
     }
@@ -410,10 +565,10 @@ impl GlobalState {
 
     pub fn list_task_start(&self, dir: u8) {
         match dir {
-            S3_TASK_CONTEXT_DIR_LEFT => {
+            S3_TASK_CONTEXT_DIR_LEFT | S3_TASK_CONTEXT_DIR_LEFT_DIFF_MODE => {
                 self.start(TASK_STATUS_BIT_LEFT);
             },
-            S3_TASK_CONTEXT_DIR_RIGHT => {
+            S3_TASK_CONTEXT_DIR_RIGHT | S3_TASK_CONTEXT_DIR_RIGHT_DIFF_MODE => {
                 self.start(TASK_STATUS_BIT_RIGHT);
             },
             _ => {
@@ -424,10 +579,10 @@ impl GlobalState {
 
     pub fn list_task_complete(&self, dir: u8) {
         match dir {
-            S3_TASK_CONTEXT_DIR_LEFT => {
+            S3_TASK_CONTEXT_DIR_LEFT | S3_TASK_CONTEXT_DIR_LEFT_DIFF_MODE => {
                 self.complete(TASK_STATUS_BIT_LEFT);
             },
-            S3_TASK_CONTEXT_DIR_RIGHT => {
+            S3_TASK_CONTEXT_DIR_RIGHT | S3_TASK_CONTEXT_DIR_RIGHT_DIFF_MODE => {
                 self.complete(TASK_STATUS_BIT_RIGHT);
             },
             _ => {
@@ -438,7 +593,7 @@ impl GlobalState {
 
     pub fn list_task_is_running(&self, dir: u8) -> bool {
         match dir {
-            S3_TASK_CONTEXT_DIR_LEFT => {
+            S3_TASK_CONTEXT_DIR_LEFT | S3_TASK_CONTEXT_DIR_LEFT_DIFF_MODE => {
                 return self.is_running(TASK_STATUS_BIT_LEFT);
             },
             S3_TASK_CONTEXT_DIR_RIGHT => {
@@ -547,7 +702,34 @@ pub(crate) struct DataMapContext {
 }
 
 impl DataMapContext {
-    pub fn new(data_map_channel: UnboundedReceiver<HashMap<ObjectPrefix, Vec<(ObjectName, ObjectProps)>>>, g_state: GlobalState) -> Self {
+    pub fn new(data_map_channel: UnboundedReceiver<HashMap<ObjectPrefix, Vec<(ObjectName, ObjectProps)>>>, g_state: GlobalState, opt_filter: Option<String>, opt_mode: RunMode) -> Self {
+        // init filter if we got from cli
+        if let Some(expr) = opt_filter {
+            let mut engine = Engine::new();
+            engine.set_fail_on_invalid_map_property(true)
+                .set_max_variables(2) // only SOURCE and TARGET
+                .set_max_map_size(2); // only size and last_modified
+
+            let ast = engine.compile_expression(expr);
+            if ast.is_err() {
+                error!("unable to compile object filter expression: {ast:?}");
+                std::process::exit(1);
+            }
+            let filter = ObjectFilter {
+                engine: engine,
+                ast: ast.unwrap(),
+            };
+            let res = filter.check_expr(opt_mode);
+            if res != true {
+                std::process::exit(1);
+            }
+            let res = OBJECT_FILTER.set(filter);
+            if res.is_err() {
+                error!("unable to set value to global object filter: {res:?}");
+                std::process::exit(1);
+            }
+        }
+
         Self {
             data_map_channel: data_map_channel,
             g_state: g_state,

@@ -138,6 +138,9 @@ impl PrefixMap {
                             equal.push((key, props.to_owned()));
                         }
                     },
+                    MatchResult::Ignore => {
+                        // object is filtered out
+                    },
                     result @ _ => {
                         panic!("{:?} should not occurs here", result);
                     }
@@ -219,6 +222,8 @@ impl ObjectMap {
                         // if this is a duplicated props, just ignore it
                     },
                     MatchResult::Equal => {
+                    },
+                    MatchResult::Ignore => {
                     },
                     res @ _ => {
                         // we only care about the one need to do mtime check
