@@ -181,7 +181,7 @@ A bucket with 100 million objects used as benchmark baseline
 ## Roadmap
 - [ ] ~~Provide tools to generate ks hints~~
 - [ ] ~~Generate ks hints from Amazon S3 Inventory~~
-- [ ] Add support for directory buckets (Amazon S3 Express One Zone)
+- [ ] Add support for directory buckets (Amazon S3 Express One Zone), see: https://github.com/awslabs/aws-sdk-rust/issues/992
 - [ ] ~~Rule based metadata comparasion for diff mode~~
 
 ## Security
