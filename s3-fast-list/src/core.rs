@@ -81,7 +81,7 @@ impl ObjectFilter {
                                 }
                             },
                             rhai::Expr::Variable(names, _, _) => {
-                                let name = names.3.as_str();
+                                let name = names.1.as_str();
                                 if !OBJECT_FILTER_ALLOWED_VARIABLE.contains(&name) {
                                     error!("variable \"{name}\" not allowed");
                                     cont = false;
