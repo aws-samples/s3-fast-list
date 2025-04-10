@@ -17,7 +17,7 @@ pub struct AsyncParquetOutput<W> {
 
 impl<W: AsyncWrite + Unpin + Send> AsyncParquetOutput<W> {
 
-    pub fn new(buf_wr: W, buffer_size: usize) -> Self {
+    pub fn new(buf_wr: W) -> Self {
 
         // define fields
         let field_key = Field::new("Key", DataType::Utf8, false);
@@ -37,7 +37,7 @@ impl<W: AsyncWrite + Unpin + Send> AsyncParquetOutput<W> {
             .build();
 
         // build writer
-        let writer = AsyncArrowWriter::try_new(buf_wr, Arc::clone(&schema_ref), buffer_size, Some(writer_props.clone())).unwrap();
+        let writer = AsyncArrowWriter::try_new(buf_wr, Arc::clone(&schema_ref), Some(writer_props.clone())).unwrap();
 
         Self {
             schema_ref: schema_ref,
