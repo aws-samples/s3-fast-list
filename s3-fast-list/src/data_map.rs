@@ -106,7 +106,7 @@ impl PrefixMap {
         let buffer_size = 100 * MB;
         let f = tokio::fs::File::create(output_file).await?;
         let writer = tokio::io::BufWriter::with_capacity(buffer_size, f);
-        let mut parquet = utils::AsyncParquetOutput::new(writer, buffer_size);
+        let mut parquet = utils::AsyncParquetOutput::new(writer);
 
         let hash = self.inner.read().await;
 
