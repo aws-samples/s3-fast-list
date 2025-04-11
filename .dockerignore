@@ -1,0 +1,30 @@
+# Version control
+.git
+.gitignore
+.github
+
+# Rust build artifacts (exclude local target directory)
+target/
+**/*.rs.bk
+*.pdb
+
+# Docker files (no need to copy these into the build context)
+Dockerfile
+.dockerignore
+
+# Temporary files
+**/*.log
+**/*.swp
+**/*.tmp
+**/tmp/
+
+# Data files that shouldn't be in the image
+**/*.parquet
+**/*.csv
+**/*.json
+**/*.dat
+
+# Documentation
+**/*.md
+CONTRIBUTING.md
+CODE_OF_CONDUCT.md
