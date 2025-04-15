@@ -52,6 +52,18 @@ struct Cli {
     /// force path-style addressing (default when using --endpoint-url)
     #[arg(long, global=true)]
     force_path_style: bool,
+
+    /// log file path (implies --log) [default: fastlist_{datetime}.log]
+    #[arg(long, global=true)]
+    output_log_file: Option<String>,
+
+    /// keyspace file output path [default: {region}_{bucket}_{datetime}.ks]
+    #[arg(long, global=true)]
+    output_ks_file: Option<String>,
+
+    /// parquet file output path [default: {region}_{bucket}_{datetime}.parquet]
+    #[arg(long, global=true)]
+    output_parquet_file: Option<String>,
 }
 
 #[derive(Subcommand)]
@@ -130,13 +142,25 @@ fn main() {
     // Use path-style addressing if explicitly requested or if a custom endpoint is provided
     let opt_force_path_style = cli.force_path_style || opt_endpoint.is_some();
 
+    // Extract output file options
+    let opt_output_ks_file = cli.output_ks_file;
+    let opt_output_parquet_file = cli.output_parquet_file;
+    let opt_output_log_file = cli.output_log_file;
+
     // setup loglevel and log file
-    let opt_log = cli.log;
+    // if output_log_file is set, it implies log=true
+    let opt_log = cli.log || opt_output_log_file.is_some();
     let package_name = env!("CARGO_PKG_NAME").replace("-", "_");
     let loglevel_s = format!("{}=info", package_name);
     let loglevel = std::env::var("RUST_LOG").unwrap_or(loglevel_s);
+
     if opt_log {
-        let logfile_s = format!("fastlist_{}.log", Local::now().format("%Y%m%d%H%M%S"));
+        // Use specified log file path or generate default with timestamp
+        let logfile_s = match &opt_output_log_file {
+            Some(path) => path.clone(),
+            None => format!("fastlist_{}.log", Local::now().format("%Y%m%d%H%M%S"))
+        };
+
         let logfile = std::fs::OpenOptions::new()
                                 .write(true)
                                 .create(true)
@@ -274,18 +298,28 @@ fn main() {
             "".to_string()
         };
 
-        let filename_ks = format!("{}{}_{}.ks", region_prefix, opt_bucket, dt_str);
-        let filename_output = if opt_mode == RunMode::List {
-            format!("{}{}_{}.parquet", region_prefix, opt_bucket, dt_str)
-        } else {
-            let target_region_prefix = if let Some(Some(target_region)) = &opt_target_region {
-                format!("{}_", target_region)
-            } else {
-                "".to_string()
-            };
-            format!("{}{}_{}{}_{}.parquet",
-                region_prefix, opt_bucket,
-                target_region_prefix, opt_target_bucket.as_ref().unwrap(), dt_str)
+        // Use custom KS file path if provided, otherwise generate default
+        let filename_ks = match &opt_output_ks_file {
+            Some(path) => path.clone(),
+            None => format!("{}_{}_{}.ks", region_prefix, opt_bucket, dt_str)
+        };
+
+        // Use custom parquet file path if provided, otherwise generate default
+        let filename_output = match &opt_output_parquet_file {
+            Some(path) => path.clone(),
+            None => {
+                if opt_mode == RunMode::List {
+                    format!("{}_{}_{}.parquet", region_prefix, opt_bucket, dt_str)
+                } else {
+                    let target_region_prefix = if let Some(Some(target_region)) = &opt_target_region {
+                        format!("{}_", target_region)
+                    } else {
+                        "".to_string()
+                    };
+                    format!("{}_{}_{}_{}_{}.parquet", region_prefix, opt_bucket,
+                        target_region_prefix, opt_target_bucket.as_ref().unwrap(), dt_str)
+                }
+            }
         };
         set.spawn_blocking(move || {
             tokio::runtime::Handle::current().block_on(async move {
