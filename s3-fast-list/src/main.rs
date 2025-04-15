@@ -44,6 +44,14 @@ struct Cli {
     /// log to file [default: fastlist_{datetime}.log]
     #[arg(short, long, global=true)]
     log: bool,
+
+    /// custom S3 endpoint URL
+    #[arg(long = "endpoint-url", global=true)]
+    endpoint: Option<String>,
+
+    /// force path-style addressing (default when using --endpoint-url)
+    #[arg(long, global=true)]
+    force_path_style: bool,
 }
 
 #[derive(Subcommand)]
@@ -51,9 +59,9 @@ enum Commands {
 
     /// fast list and export results
     List {
-        /// source aws region
+        /// source aws region (optional, uses AWS SDK defaults if not provided)
         #[arg(long)]
-        region: String,
+        region: Option<String>,
 
         /// source bucket to list
         #[arg(long)]
@@ -62,17 +70,17 @@ enum Commands {
 
     /// bi-dir fast list and diff results
     Diff {
-        /// source aws region
+        /// source aws region (optional, uses AWS SDK defaults if not provided)
         #[arg(long)]
-        region: String,
+        region: Option<String>,
 
         /// source bucket to list
         #[arg(long)]
         bucket: String,
 
-        /// target aws region
+        /// target aws region (optional, uses AWS SDK defaults if not provided)
         #[arg(long)]
-        target_region: String,
+        target_region: Option<String>,
 
         /// target bucket to list
         #[arg(long)]
@@ -116,6 +124,12 @@ fn main() {
         },
     }
 
+    // extract endpoint and path style options
+    let opt_endpoint = cli.endpoint;
+
+    // Use path-style addressing if explicitly requested or if a custom endpoint is provided
+    let opt_force_path_style = cli.force_path_style || opt_endpoint.is_some();
+
     // setup loglevel and log file
     let opt_log = cli.log;
     let package_name = env!("CARGO_PKG_NAME").replace("-", "_");
@@ -150,8 +164,12 @@ fn main() {
     let ks_filename = if let Some(f) = opt_ks_file {
         f.to_string()
     } else {
-        // default ks hints input filename
-        format!("{opt_region}_{opt_bucket}_ks_hints.input")
+        // default ks hints input filename - include region if provided
+        if let Some(region) = &opt_region {
+            format!("{}_{}_{}", region, opt_bucket, "ks_hints.input")
+        } else {
+            format!("{}_{}", opt_bucket, "ks_hints.input")
+        }
     };
 
     // load ks hints if exists
@@ -172,8 +190,17 @@ fn main() {
     info!("fast list tools v{} starting:", env!("CARGO_PKG_VERSION"));
     info!("  - mode {:?}, threads {}, concurrent tasks {}", opt_mode, opt_threads, opt_concurrency);
     info!("  - start prefix {}", opt_prefix);
+    if let Some(region) = &opt_region {
+        info!("  - region {}", region);
+    }
     if opt_filter.is_some() {
         info!("  - filter \"{}\"", opt_filter.as_ref().unwrap());
+    }
+    if let Some(endpoint) = &opt_endpoint {
+        info!("  - using custom endpoint-url: {}", endpoint);
+    }
+    if opt_force_path_style {
+        info!("  - using path-style addressing");
     }
     if ks_list_len == 0 {
         info!("  - NO ks hints found");
@@ -206,8 +233,9 @@ fn main() {
         } else {
             core::S3_TASK_CONTEXT_DIR_LEFT_LIST_MODE
         };
-        let task_ctx = core::S3TaskContext::new(opt_region, opt_bucket,
-            data_map_channel.clone(), dir, g_state.clone()
+        let task_ctx = core::S3TaskContext::new(opt_bucket,
+            opt_region.as_ref().map(|s| s.as_str()), opt_endpoint.as_ref().map(|s| s.as_str()),
+            opt_force_path_style, data_map_channel.clone(), dir, g_state.clone()
         );
         set.spawn_blocking(move || {
             tokio::runtime::Handle::current().block_on(async move {
@@ -218,7 +246,14 @@ fn main() {
         // init right task if bidir mode
         if opt_mode == RunMode::BiDir {
             let prefix = opt_prefix.clone();
-            let task_ctx = core::S3TaskContext::new(opt_target_region.as_ref().unwrap(), opt_target_bucket.as_ref().unwrap(),
+            // Extract target_region from double-wrapped option
+            let target_region_str = match opt_target_region.as_ref() {
+                Some(inner_opt) => inner_opt.as_ref().map(|s| s.as_str()),
+                None => None,
+            };
+
+            let task_ctx = core::S3TaskContext::new(opt_target_bucket.as_ref().unwrap(),
+                target_region_str, opt_endpoint.as_ref().map(|s| s.as_str()), opt_force_path_style,
                 data_map_channel, core::S3_TASK_CONTEXT_DIR_RIGHT_DIFF_MODE, g_state.clone()
             );
             let ks_hints = data_map::KeySpaceHints::new_from(&ks_list);
@@ -231,12 +266,26 @@ fn main() {
 
         // init data map task
         let data_map_ctx = core::DataMapContext::new(data_map_channel_rx, g_state.clone(), opt_filter, opt_mode.clone());
-        let filename_ks = format!("{}_{}_{}.ks", opt_region, opt_bucket, dt_str);
-        let filename_output = if opt_mode == RunMode::List {
-            format!("{}_{}_{}.parquet", opt_region, opt_bucket, dt_str)
+
+        // Generate output filenames with region if provided
+        let region_prefix = if let Some(region) = opt_region {
+            format!("{}_", region)
         } else {
-            format!("{}_{}_{}_{}_{}.parquet", opt_region, opt_bucket,
-                opt_target_region.as_ref().unwrap(), opt_target_bucket.as_ref().unwrap(), dt_str)
+            "".to_string()
+        };
+
+        let filename_ks = format!("{}{}_{}.ks", region_prefix, opt_bucket, dt_str);
+        let filename_output = if opt_mode == RunMode::List {
+            format!("{}{}_{}.parquet", region_prefix, opt_bucket, dt_str)
+        } else {
+            let target_region_prefix = if let Some(Some(target_region)) = &opt_target_region {
+                format!("{}_", target_region)
+            } else {
+                "".to_string()
+            };
+            format!("{}{}_{}{}_{}.parquet",
+                region_prefix, opt_bucket,
+                target_region_prefix, opt_target_bucket.as_ref().unwrap(), dt_str)
         };
         set.spawn_blocking(move || {
             tokio::runtime::Handle::current().block_on(async move {

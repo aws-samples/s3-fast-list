@@ -4,6 +4,7 @@ use crate::stats::HttpStatusCodeTracker;
 pub const ERROR_S3_NEXT_STREAM_TIMEOUT: u8 = 0x1;
 pub const ERROR_S3_CLIENT_GENERIC: u8 = 0x2;
 pub const ERROR_S3_CLIENT_CONNECTION_TIMEOUT: u8 = 0x3;
+pub const ERROR_S3_MISSING_REGION: u8 = 0x4;
 pub const ERROR_S3_NO_BUCKET: u8 = 0x10;
 pub const ERROR_S3_ACCESS_DENIED: u8 = 0x11;
 pub const ERROR_S3_PERMANENT_REDIRECT: u8 = 0x12;

@@ -33,6 +33,8 @@ Options:
   -k, --ks-file <KS_FILE>          input key space hints file [default: {region}_{bucket}_ks_hints.input]
   -f, --filter <FILTER>            object filter expresion
   -l, --log                        log to file [default: fastlist_{datetime}.log]
+      --endpoint <ENDPOINT>        custom S3 endpoint URL
+      --force-path-style           force path-style addressing (default when using --endpoint)
   -h, --help                       Print help
   -V, --version                    Print version
 ```
@@ -55,6 +57,33 @@ Above methods work for most use cases.
 But if you have a million+ objects bucket and you need to get full objects list job done in a very short time span, you should consider invoke ListObjectsV2 API in parallel to shorten end-to-end time cost.
 
 As long as supplied with a pre-segmented prefix (-k ks_hints.input) input file, this tools can concurrently invoke ListObjectsV2 API to shorten overall list time to get a full list of objects inventory.
+
+### Custom S3 Endpoint
+
+To use s3-fast-list with an S3-compatible object storage (LocalStack, Ceph, etc.), specify the `--endpoint` argument, set the `AWS_ENDPOINT_URL` environment variable, or set `endpoint_url` in an AWS profile and set the `AWS_PROFILE` environment variable.
+
+When using a custom endpoint, path-style addressing is automatically enabled. You can explicitly control this behavior with the `--force-path-style` option.
+
+```
+s3-fast-list list --bucket my-bucket --endpoint https://s3.example.com
+```
+
+or
+
+```
+export AWS_ENDPOINT_URL=https://s3.example.com
+s3-fast-list list --bucket my-bucket
+```
+
+### Path-Style Addressing
+
+By default, when using a custom endpoint, path-style addressing is enabled. For some S3-compatible storage systems, you may need to explicitly set this option:
+
+```
+s3-fast-list list --bucket my-bucket --force-path-style
+```
+
+This changes the request URLs from virtual-hosted style (`https://my-bucket.s3.example.com/key`) to path style (`https://s3.example.com/my-bucket/key`).
 
 ### List mode
 ```
@@ -120,7 +149,7 @@ in `diff` mode, enum value description of `DiffFlag` field:
 
 #### Prefix distribution (ks file)
 
-A prefix distribution csv file with name convension `{region}_{bucket}_{datetime}.ks` is exported at the end of each run.
+A prefix distribution csv file with naming pattern `[{region}_]{bucket}_{datetime}.ks` is exported at the end of each run. The region prefix is included if a region was provided.
 
 Inside of ks file, each line indicate the number of objects under that prefix with assumed use delimit of "/".
 

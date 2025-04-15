@@ -640,12 +640,12 @@ pub(crate) struct S3TaskContext {
 }
 
 impl S3TaskContext {
-    pub fn new(region: &str, bucket: &str, data_map_channel: UnboundedSender<HashMap<ObjectPrefix, Vec<(ObjectName, ObjectProps)>>>,
+    pub fn new(bucket: &str, region: Option<&str>, endpoint: Option<&str>, force_path_style: bool,
+            data_map_channel: UnboundedSender<HashMap<ObjectPrefix, Vec<(ObjectName, ObjectProps)>>>,
             dir: u8, g_state: GlobalState) -> Self {
 
         // create and config s3 client
         let loader = aws_config::from_env()
-            .region(aws_sdk_s3::config::Region::new(region.to_owned()))
             .retry_config(
                 aws_config::retry::RetryConfig::standard()
                     .with_max_attempts(S3_CLIENT_MAX_ATTEMPTS)
@@ -664,7 +664,25 @@ impl S3TaskContext {
                 })
             });
 
-        let s3_client = aws_sdk_s3::Client::new(&config);
+        // Build S3 config with optional region and endpoint
+        let mut s3_config_builder = aws_sdk_s3::config::Builder::from(&config);
+
+        if let Some(region_str) = region {
+            s3_config_builder = s3_config_builder.region(
+                aws_sdk_s3::config::Region::new(region_str.to_owned())
+            );
+        }
+
+        if let Some(endpoint_url) = endpoint {
+            s3_config_builder = s3_config_builder.endpoint_url(endpoint_url.to_owned());
+        }
+
+        // Set force-path-style addressing if requested
+        if force_path_style {
+            s3_config_builder = s3_config_builder.force_path_style(true);
+        }
+
+        let s3_client = aws_sdk_s3::Client::from_conf(s3_config_builder.build());
 
         Self {
             s3_bucket_name: bucket.to_string(),

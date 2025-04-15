@@ -3,7 +3,7 @@ use std::collections::HashMap;
 use std::time::{SystemTime, UNIX_EPOCH};
 use aws_sdk_s3::operation::list_objects_v2::ListObjectsV2Error;
 use tokio::time::{Instant, timeout_at};
-use log::{info, debug, trace};
+use log::{info, debug, error};
 use crate::core;
 use crate::core::{S3TaskContext, ObjectKey, ObjectPrefix, ObjectName, ObjectProps};
 use crate::data_map;
@@ -107,19 +107,27 @@ async fn flat_list_run_to_complete(ctx: &S3TaskContext, prefix: &str, start: &st
 
 async fn flat_list(ctx: &S3TaskContext, prefix: &str, start_after: &str, until: Option<&str>) -> std::result::Result<(), FlatRuntimeError> {
 
-    let mut stream = ctx.s3_client.list_objects_v2()
+    // Build the request with more detailed debug information
+    let request = ctx.s3_client.list_objects_v2()
         .bucket(&ctx.s3_bucket_name)
         .prefix(prefix)
-        .start_after(start_after)
-        .into_paginator()
-        .send();
+        .start_after(start_after);
+
+    // Debug log the request details
+    debug!("Sending S3 request: bucket={}, prefix={}, start_after={}",
+           &ctx.s3_bucket_name, prefix, start_after);
+
+    // Create the paginator
+    let mut stream = request.into_paginator().send();
 
     debug!("input pair start {}, end {:?}", start_after, until);
     let mut next_start = start_after.to_string();
     let mut is_ended = false;
     loop {
 
-        let res = timeout_at(Instant::now() + Duration::from_secs(core::DEFAULT_S3_CLIENT_TIMEOUT), stream.next()).await;
+        let timeout_duration = Duration::from_secs(core::DEFAULT_S3_CLIENT_TIMEOUT);
+        debug!("Waiting for S3 response with timeout of {} seconds", timeout_duration.as_secs());
+        let res = timeout_at(Instant::now() + timeout_duration, stream.next()).await;
 
         if res.is_err() {
             debug!("flat list timeout next_start: {}", next_start);
@@ -134,57 +142,106 @@ async fn flat_list(ctx: &S3TaskContext, prefix: &str, start_after: &str, until: 
         let response = paginator.unwrap();
 
         if let Err(sdk_err) = response {
+            // Log detailed error information
+            error!("S3 API error: {:?}", sdk_err);
 
             match &sdk_err {
                 aws_sdk_s3::error::SdkError::ServiceError(err) => {
                     let errno;
                     match err.err() {
                         ListObjectsV2Error::NoSuchBucket(e) => {
-                            trace!(" - {}", e);
+                            error!("NoSuchBucket error: {}", e);
                             errno = ERROR_S3_NO_BUCKET;
                         },
                         e @ _ => {
-                            match e.meta().code() {
+                            let code = e.meta().code();
+                            error!("Service error code: {:?}, message: {:?}",
+                                   code, e.meta().message());
+
+                            match code {
                                 Some("AccessDenied") => {
                                     errno = ERROR_S3_ACCESS_DENIED;
                                 },
                                 Some("PermanentRedirect") => {
                                     errno = ERROR_S3_PERMANENT_REDIRECT;
                                 },
-                                Some(_) => {
+                                Some(other_code) => {
+                                    error!("Unknown service error code: {}", other_code);
                                     errno = ERROR_S3_UNKOWN;
                                 },
                                 None => {
-                                    panic!("unkown error occurs from ListObjectsV2 {}", e);
+                                    error!("Service error without code: {}", e);
+                                    panic!("unknown error occurs from ListObjectsV2 {}", e);
                                 },
                             }
-                            trace!(" - {}", e);
+                            error!("Full error details: {}", e);
                         },
                     }
                     let http_status_code = err.raw().status().as_u16();
+                    error!("HTTP status code: {}", http_status_code);
                     return Err(
                         FlatRuntimeError::new(
                             errno,
-                            err.err().meta().message().unwrap().to_string(),
+                            err.err().meta().message().unwrap_or("No error message").to_string(),
                             next_start
                         )
                         .with_http_status_code_tracker(http_status_code, ctx.get_tracker())
                     );
                 },
                 aws_sdk_s3::error::SdkError::DispatchFailure(err) => {
+                    error!("Dispatch failure: {:?}", err);
+
+                    // Check for region-related errors
+                    if let Some(conn_err) = err.as_connector_error() {
+                        let err_str = conn_err.to_string();
+                        if err_str.contains("region must be set") {
+                            error!("Region error: A region must be set when using S3");
+                            error!("Fix: Set region using --region parameter, AWS_REGION environment variable, or in AWS profile");
+                            return Err(
+                                FlatRuntimeError::new(
+                                    ERROR_S3_MISSING_REGION,
+                                    "Region must be set when using S3. Fix: Use --region parameter, AWS_REGION env var, or set in AWS profile.".to_string(),
+                                    next_start
+                                )
+                            );
+                        }
+                    }
+
                     if err.is_timeout() {
-                        ctx.g_state.inc_s3_client_timeout();
-                        return Err(
-                           FlatRuntimeError::new(
-                                ERROR_S3_CLIENT_CONNECTION_TIMEOUT,
-                                err.as_connector_error().unwrap().to_string(),
-                                next_start
-                            )
-                        );
+                        if let Some(conn_err) = err.as_connector_error() {
+                            error!("Connection timeout error: {}", conn_err);
+                            ctx.g_state.inc_s3_client_timeout();
+                            return Err(
+                               FlatRuntimeError::new(
+                                    ERROR_S3_CLIENT_CONNECTION_TIMEOUT,
+                                    conn_err.to_string(),
+                                    next_start
+                                )
+                            );
+                        } else {
+                            error!("Connection timeout but no connector error");
+                            ctx.g_state.inc_s3_client_timeout();
+                            return Err(
+                               FlatRuntimeError::new(
+                                    ERROR_S3_CLIENT_CONNECTION_TIMEOUT,
+                                    "Unknown timeout error".to_string(),
+                                    next_start
+                                )
+                            );
+                        }
                     }
                 },
+                aws_sdk_s3::error::SdkError::ResponseError(err) => {
+                    error!("Response error: {:?}", err);
+                },
+                aws_sdk_s3::error::SdkError::TimeoutError(err) => {
+                    error!("Timeout error: {:?}", err);
+                },
+                aws_sdk_s3::error::SdkError::ConstructionFailure(err) => {
+                    error!("Construction failure: {:?}", err);
+                },
                 _ => {
-                    /* do nothing here, let below return handle everything else */
+                    error!("Other SDK error type: {:?}", sdk_err);
                 }
             }
             ctx.g_state.inc_s3_client_generic_error();
@@ -233,7 +290,7 @@ async fn flat_list(ctx: &S3TaskContext, prefix: &str, start_after: &str, until: 
 
         if let Err(e) = ctx.data_map_channel.send(output) {
             if ctx.is_quit() != true {
-                panic!("error on send data to data map channel"); 
+                panic!("error on send data to data map channel");
             }
             panic!("failed to send output data to data map channel, err: {}", e);
         }
