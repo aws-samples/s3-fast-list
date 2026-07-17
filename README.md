@@ -35,6 +35,7 @@ Options:
   -l, --log                        log to file [default: fastlist_{datetime}.log]
       --endpoint <ENDPOINT>        custom S3 endpoint URL
       --force-path-style           force path-style addressing (default when using --endpoint)
+      --no-sign-request            do not sign requests, access bucket anonymously (--region is recommended)
   -h, --help                       Print help
   -V, --version                    Print version
 ```
@@ -84,6 +85,22 @@ s3-fast-list list --bucket my-bucket --force-path-style
 ```
 
 This changes the request URLs from virtual-hosted style (`https://my-bucket.s3.example.com/key`) to path style (`https://s3.example.com/my-bucket/key`).
+
+### Anonymous Access
+
+Publicly readable buckets, such as the [AWS Open Data](https://registry.opendata.aws/) datasets, can be listed without AWS credentials. Use `--no-sign-request` to skip credentials lookup and request signing, same as the AWS CLI option of the same name:
+
+```
+s3-fast-list --no-sign-request list --region us-east-1 --bucket noaa-normals-pds
+```
+
+Supplying `--region` is recommended. The flag does not change how the region is resolved, which still falls back to the environment or an AWS profile, and an unsigned run usually has neither.
+
+`ks-tool` accepts the same option. The manifest and every inventory file it references must be publicly readable, as both are fetched with the same unsigned client:
+
+```
+ks-tool inventory --no-sign-request -r {region} -m s3://{location_of_your_s3_inventory}.manifest.json
+```
 
 ### List mode
 ```
