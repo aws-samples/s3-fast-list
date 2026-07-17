@@ -641,11 +641,12 @@ pub(crate) struct S3TaskContext {
 
 impl S3TaskContext {
     pub fn new(bucket: &str, region: Option<&str>, endpoint: Option<&str>, force_path_style: bool,
+            no_sign_request: bool,
             data_map_channel: UnboundedSender<HashMap<ObjectPrefix, Vec<(ObjectName, ObjectProps)>>>,
             dir: u8, g_state: GlobalState) -> Self {
 
         // create and config s3 client
-        let loader = aws_config::from_env()
+        let mut loader = aws_config::from_env()
             .retry_config(
                 aws_config::retry::RetryConfig::standard()
                     .with_max_attempts(S3_CLIENT_MAX_ATTEMPTS)
@@ -656,6 +657,11 @@ impl S3TaskContext {
                     .connect_timeout(std::time::Duration::from_secs(S3_CLIENT_CONNECT_TIMEOUT))
                     .build()
             );
+
+        // skip credentials loading and request signing for anonymous access
+        if no_sign_request {
+            loader = loader.no_credentials();
+        }
 
         let config = tokio::task::block_in_place(move || {
             tokio::runtime::Handle::current()

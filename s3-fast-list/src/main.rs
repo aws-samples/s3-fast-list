@@ -53,6 +53,10 @@ struct Cli {
     #[arg(long, global=true)]
     force_path_style: bool,
 
+    /// do not sign requests, access bucket anonymously (--region is recommended)
+    #[arg(long, global=true)]
+    no_sign_request: bool,
+
     /// log file path (implies --log) [default: fastlist_{datetime}.log]
     #[arg(long, global=true)]
     output_log_file: Option<String>,
@@ -141,6 +145,9 @@ fn main() {
 
     // Use path-style addressing if explicitly requested or if a custom endpoint is provided
     let opt_force_path_style = cli.force_path_style || opt_endpoint.is_some();
+
+    // access buckets anonymously, no credentials loading and no request signing
+    let opt_no_sign_request = cli.no_sign_request;
 
     // Extract output file options
     let opt_output_ks_file = cli.output_ks_file;
@@ -259,7 +266,7 @@ fn main() {
         };
         let task_ctx = core::S3TaskContext::new(opt_bucket,
             opt_region.as_ref().map(|s| s.as_str()), opt_endpoint.as_ref().map(|s| s.as_str()),
-            opt_force_path_style, data_map_channel.clone(), dir, g_state.clone()
+            opt_force_path_style, opt_no_sign_request, data_map_channel.clone(), dir, g_state.clone()
         );
         set.spawn_blocking(move || {
             tokio::runtime::Handle::current().block_on(async move {
@@ -278,7 +285,8 @@ fn main() {
 
             let task_ctx = core::S3TaskContext::new(opt_target_bucket.as_ref().unwrap(),
                 target_region_str, opt_endpoint.as_ref().map(|s| s.as_str()), opt_force_path_style,
-                data_map_channel, core::S3_TASK_CONTEXT_DIR_RIGHT_DIFF_MODE, g_state.clone()
+                opt_no_sign_request, data_map_channel, core::S3_TASK_CONTEXT_DIR_RIGHT_DIFF_MODE,
+                g_state.clone()
             );
             let ks_hints = data_map::KeySpaceHints::new_from(&ks_list);
             set.spawn_blocking(move || {

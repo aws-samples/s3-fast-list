@@ -222,13 +222,18 @@ async fn build_and_dump_prefix_map(client: S3Client,
     Ok(())
 }
 
-pub(crate) async fn inventory_to_ks(region: &str, manifest: &str, ks: Option<&String>, max_concurrency: usize) -> Result<(), Error> {
+pub(crate) async fn inventory_to_ks(region: &str, manifest: &str, ks: Option<&String>, max_concurrency: usize, no_sign_request: bool) -> Result<(), Error> {
     let r = region.to_string();
     // build default client with region from params
-    let config = aws_config::from_env()
-        .region(aws_config::Region::new(r))
-        .load()
-        .await;
+    let mut loader = aws_config::from_env()
+        .region(aws_config::Region::new(r));
+
+    // skip credentials loading and request signing for anonymous access
+    if no_sign_request {
+        loader = loader.no_credentials();
+    }
+
+    let config = loader.load().await;
     let client = S3Client::new(&config);
     let tm = S3TransferManager::new(client.clone());
 

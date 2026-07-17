@@ -47,7 +47,11 @@ enum Commands {
 
         /// max concurrency for download and process inventory files
         #[arg(short, long, default_value_t = 1)]
-        concurrency: usize
+        concurrency: usize,
+
+        /// do not sign requests, access inventory anonymously
+        #[arg(long)]
+        no_sign_request: bool
 
     },
 }
@@ -61,8 +65,8 @@ async fn main() -> Result<(), tokio::io::Error> {
         Commands::Split { ks, count, output } => {
             utils::handle_ks_input(ks, *count, &output).await?;
         },
-        Commands::Inventory { region, manifest, ks, concurrency } => {
-            utils::inventory_to_ks(region, manifest, ks.as_ref(), *concurrency).await?;
+        Commands::Inventory { region, manifest, ks, concurrency, no_sign_request } => {
+            utils::inventory_to_ks(region, manifest, ks.as_ref(), *concurrency, *no_sign_request).await?;
         },
     }
     Ok(())
